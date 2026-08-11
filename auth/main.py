@@ -4,7 +4,8 @@ import auth_models, schemas, utils
 from auth_database import get_db
 from jose import jwt
 from datetime import datetime,timedelta
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordRequestForm,OAuth2PasswordBearer
+from jose import JWTError
 
 #this has to be stored in .env file
 SECRET_KEY = "yEUgLlGDn4jan9ClqaxjfNNgozbppER3xTVgYW16jbQ"
@@ -64,4 +65,136 @@ def login_user(form_data:OAuth2PasswordRequestForm = Depends(),db: Session = Dep
     token_data={"sub":user.username,"role":user.role}
     token = create_access_token(token_data)
     return {"access_token":token,"token_type":"bearer"}
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    credential_exception = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credential",
+    headers={"WWW-Authenticate": "Bearer"})
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=ALGORITHM)
+        username: str = payload.get("sub")
+        role: str = payload.get("role")
+        if username is None or role is None:
+            raise credential_exception
+
+    except JWTError:
+        raise credential_exception
+
+    return {"username": username, "role": role}
+
+@app.get("/protected")
+def protected_route(current_user: dict = Depends(get_current_user)):
+    return {"Message": f"Hello, {current_user['username']} | You accessed a protected route"}
+
+def require_roles(allowed_roles: list[str]):
+    def role_checker(current_user: dict = Depends(get_current_user)):
+        user_role = current_user.get("role")
+
+        if user_role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not enough permission"
+            )
+
+        return current_user
+
+    return role_checker
+
+@app.patch("/users/{user_id}")
+def update_user(
+    user_id: int,
+    payload: schemas.UserUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin"]))
+):
+    user = db.query(auth_models.User).filter(auth_models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    update_data = payload.model_dump(exclude_unset=True)
+
+    if "username" in update_data:
+        existing = db.query(auth_models.User).filter(
+            auth_models.User.username == update_data["username"],
+            auth_models.User.id != user_id
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Username already taken")
+        user.username = update_data["username"]
+
+    if "email" in update_data:
+        user.email = update_data["email"]
+
+    if "role" in update_data:
+        user.role = update_data["role"]
+
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "role": user.role
+    }
+
+
+@app.post("/users/{user_id}/change-password")
+def change_password(
+    user_id: int,
+    payload: schemas.PasswordChange,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    user = db.query(auth_models.User).filter(auth_models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # only the user themself or an admin can change it
+    if current_user["username"] != user.username and current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Not enough permission")
+    #even if user or admin has authority , only if they enter their old password correct, they can change it 
+    if not utils.verify_password(payload.current_password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+    user.hashed_password = utils.hash_password(payload.new_password)
+    db.commit()
+
+    return {"message": "Password updated successfully"}
+
+
+@app.delete("/users/{user_id}")
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin"]))
+):
+    user = db.query(auth_models.User).filter(auth_models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    db.delete(user)
+    db.commit()
+
+    return {"message": f"User '{user.username}' deleted successfully"}
+
+
+
+
+@app.get("/profile")
+def profile(current_user: dict = Depends(require_roles(["user", "admin"]))):
+    return {
+        "message": f"Profile of {current_user['username']} ({current_user['role']})"
+    }
+
+
+@app.get("/user/dashboard")
+def user_dashboard(current_user: dict = Depends(require_roles(["user"]))):
+    return {"message": "Welcome User"}
+
+
+@app.get("/admin/dashboard")
+def admin_dashboard(current_user: dict = Depends(require_roles(["admin"]))):
+    return {"message": "Welcome Admin"}
 
