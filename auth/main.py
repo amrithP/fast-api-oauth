@@ -11,6 +11,9 @@ from jose import JWTError
 SECRET_KEY = "yEUgLlGDn4jan9ClqaxjfNNgozbppER3xTVgYW16jbQ"
 ALGORITHM = "HS256" 
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
+#newly added to find from which application the user is accessing 
+VALID_CLIENT_ID = "my-app-client"
+VALID_CLIENT_SECRET = "super-secret-value"
 
 def create_access_token(data:dict):
     to_encode=data.copy()
@@ -60,6 +63,11 @@ def register_user(user:schemas.UserCreate,db: Session = Depends(get_db)):
 
 @app.post("/login")
 def login_user(form_data:OAuth2PasswordRequestForm = Depends(),db: Session = Depends(get_db)):
+
+    if form_data.client_id != VALID_CLIENT_ID or form_data.client_secret != VALID_CLIENT_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid client credentials")
+
+
     user = db.query(auth_models.User).filter(auth_models.User.username==form_data.username).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="invalid username")
