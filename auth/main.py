@@ -28,6 +28,11 @@ def register_user(user:schemas.UserCreate,db: Session = Depends(get_db)):
     if existing_user:
         raise HTTPException(status_code=400,detail="User already exits")
 
+    #newly added. Check if the role already exists.  schemas file is itself what we enter in the swagger(pydantic class)
+    role_exists = db.query(auth_models.Role).filter(auth_models.Role.name == user.role).first()
+    if not role_exists:
+        raise HTTPException(status_code=400, detail="Invalid role")
+
     #hash the password
     hashed_password = utils.hash_password(user.password)
 
@@ -180,10 +185,59 @@ def delete_user(
     return {"message": f"User '{user.username}' deleted successfully"}
 
 
+#role management endpoints
+
+@app.post("/roles", response_model=schemas.RoleOut)
+def create_role(
+    payload: schemas.RoleCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin"]))
+):
+    existing = db.query(auth_models.Role).filter(auth_models.Role.name == payload.name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Role already exists")
+
+    new_role = auth_models.Role(name=payload.name,id=payload.id)
+    db.add(new_role)
+    db.commit()
+    db.refresh(new_role)
+    return new_role
 
 
-@app.get("/profile")
+@app.get("/roles", response_model=list[schemas.RoleOut])
+def list_roles(db: Session = Depends(get_db)):
+    return db.query(auth_models.Role).all()
+
+
+@app.delete("/roles/{role_id}")
+def delete_role(
+    role_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["admin"]))
+):
+    role = db.query(auth_models.Role).filter(auth_models.Role.id == role_id).first() #taken from db(mysql)
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    in_use = db.query(auth_models.User).filter(auth_models.User.role == role.name).first()
+    if in_use:
+        raise HTTPException(status_code=400, detail="Cannot delete a role that is assigned to a user")
+
+    db.delete(role)
+    db.commit()
+    return {"message": f"Role '{role.name}' deleted"}
+
+
+
+
+"""@app.get("/profile")
 def profile(current_user: dict = Depends(require_roles(["user", "admin"]))):
+    return {
+        "message": f"Profile of {current_user['username']} ({current_user['role']})"
+    }"""
+#/profile no longer needs a hardcoded list at all
+@app.get("/profile")
+def profile(current_user: dict = Depends(get_current_user)):
     return {
         "message": f"Profile of {current_user['username']} ({current_user['role']})"
     }

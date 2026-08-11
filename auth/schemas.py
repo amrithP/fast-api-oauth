@@ -21,3 +21,16 @@ class UserUpdate(BaseModel):
 class PasswordChange(BaseModel):
     current_password: str
     new_password: str
+
+class RoleCreate(BaseModel):
+    id:int
+    name: str
+
+#RoleOut defines the shape of the response, and from_attributes = True is what allows FastAPI to build that response directly from a database object's attributes instead of requiring you to convert it to a dict by hand first.
+class RoleOut(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True         #new_role is not a dict , its a sqlalchemy object .So to read and rreeturn as ouput , we have set from_attributes=true
+
