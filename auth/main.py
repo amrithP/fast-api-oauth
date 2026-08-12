@@ -39,12 +39,12 @@ def register_user(user:schemas.UserCreate,db: Session = Depends(get_db)):
     #hash the password
     hashed_password = utils.hash_password(user.password)
 
-    #create new user instance 
+    #create new user instance . After foreign key 
     new_user = auth_models.User(
             username = user.username,
             email = user.email,
             hashed_password = hashed_password,
-            role = user.role
+            role_id = role_exists.id
 
     )
 
@@ -58,7 +58,7 @@ def register_user(user:schemas.UserCreate,db: Session = Depends(get_db)):
         "id":new_user.id,
         "username":new_user.username,
         "email":new_user.email,
-        "role":new_user.role
+        "role":new_user.role.name
     }
 
 @app.post("/login")
@@ -75,7 +75,7 @@ def login_user(form_data:OAuth2PasswordRequestForm = Depends(),db: Session = Dep
     if not utils.verify_password(form_data.password,user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="invalid password")
 
-    token_data={"sub":user.username,"role":user.role}
+    token_data={"sub":user.username,"role":user.role.name}
     token = create_access_token(token_data)
     return {"access_token":token,"token_type":"bearer"}
 
@@ -138,9 +138,12 @@ def update_user(
 
     if "email" in update_data:
         user.email = update_data["email"]
-
+    #changed this due to foreign key.  Only from the mentioned roles in the role table we can update the value.
     if "role" in update_data:
-        user.role = update_data["role"]
+        role = db.query(auth_models.Role).filter(auth_models.Role.name == update_data["role"]).first()
+        if not role:
+            raise HTTPException(status_code=400, detail="Invalid role")
+        user.role_id = role.id
 
     db.commit()
     db.refresh(user)
@@ -205,7 +208,7 @@ def create_role(
     if existing:
         raise HTTPException(status_code=400, detail="Role already exists")
 
-    new_role = auth_models.Role(name=payload.name,id=payload.id)
+    new_role = auth_models.Role(name=payload.name) #stop passing id as it is autoincremented
     db.add(new_role)
     db.commit()
     db.refresh(new_role)
@@ -226,8 +229,8 @@ def delete_role(
     role = db.query(auth_models.Role).filter(auth_models.Role.id == role_id).first() #taken from db(mysql)
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
-
-    in_use = db.query(auth_models.User).filter(auth_models.User.role == role.name).first()
+    #changed after foreign key 
+    in_use = db.query(auth_models.User).filter(auth_models.User.role_id == role.id).first()
     if in_use:
         raise HTTPException(status_code=400, detail="Cannot delete a role that is assigned to a user")
 

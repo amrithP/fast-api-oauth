@@ -23,7 +23,7 @@ class PasswordChange(BaseModel):
     new_password: str
 
 class RoleCreate(BaseModel):
-    id:int
+    #id not req as its auto incremented
     name: str
 
 #RoleOut defines the shape of the response, and from_attributes = True is what allows FastAPI to build that response directly from a database object's attributes instead of requiring you to convert it to a dict by hand first.
